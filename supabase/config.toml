@@ -1,0 +1,2 @@
+[functions.sabi-proxy]
+verify_jwt = false
