@@ -125,6 +125,8 @@ async function callChecker(
   payload: Record<string, string>,
 ): Promise<Record<string, unknown> | null> {
   try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token ?? '';
     const response = await fetch(`${SUPABASE_URL}/functions/v1/sabi-proxy`, {
       method: 'POST',
       headers: {
@@ -132,7 +134,7 @@ async function callChecker(
         Authorization: `Bearer ${ANON_KEY}`,
         apikey: ANON_KEY,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, access_token: token }),
     });
     if (!response.ok) return null;
     const text = await response.text();
@@ -148,6 +150,9 @@ const NETWORK_MESSAGE =
   'Could not reach the test network checker. Check your internet and try again in a moment.';
 
 function checkerError(code: unknown): string {
+  if (code === 'not_logged_in') {
+    return 'Your login could not be verified. Please log out, log in again and try once more.';
+  }
   if (code === 'bad_hash') {
     return 'That is not a valid transaction hash. It starts with 0x and has 66 characters in total.';
   }
@@ -291,12 +296,4 @@ export async function submitQuest(
     ok: true,
     message: 'Correct. You found the real gas fee of your transaction. Your certificate is ready.',
   };
-}
-
-export async function resetQuestProgress(userId: string): Promise<void> {
-  try {
-    localStorage.removeItem(STORAGE_PREFIX + userId);
-  } catch {
-    // Browser storage can be blocked. Nothing to clear then.
-  }
 }
