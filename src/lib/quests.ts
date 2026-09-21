@@ -50,31 +50,42 @@ export interface QuestProgressRow {
   completed_at: string | null;
 }
 
-// Progress is saved in this browser, one bucket per learner
-const STORAGE_PREFIX = 'sabi_quests_';
-
-function storageKey(userId: string): string {
-  return `${STORAGE_PREFIX}${userId}`;
+export interface QuestResult {
+  ok: boolean;
+  message: string;
+  data?: Record<string, unknown>;
 }
+
+const STORAGE_PREFIX = 'sabi_quests_v1_';
 
 function readRows(userId: string): QuestProgressRow[] {
   try {
-    const raw = localStorage.getItem(storageKey(userId));
+    const raw = localStorage.getItem(STORAGE_PREFIX + userId);
     if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
+    const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as QuestProgressRow[]) : [];
   } catch {
     return [];
   }
 }
 
-function writeRows(userId: string, rows: QuestProgressRow[]): boolean {
+function writeRows(userId: string, rows: QuestProgressRow[]): void {
   try {
-    localStorage.setItem(storageKey(userId), JSON.stringify(rows));
-    return true;
+    localStorage.setItem(STORAGE_PREFIX + userId, JSON.stringify(rows));
   } catch {
-    return false;
+    // Browser storage can be blocked. The quest then will not stay saved.
   }
+}
+
+function markDone(userId: string, quest: QuestKey, details: Record<string, unknown>): void {
+  const rows = readRows(userId).filter((r) => r.quest_key !== quest);
+  rows.push({
+    quest_key: quest,
+    completed: true,
+    details,
+    completed_at: new Date().toISOString(),
+  });
+  writeRows(userId, rows);
 }
 
 export async function loadQuestProgress(
@@ -87,95 +98,86 @@ export function findRow(rows: QuestProgressRow[], key: QuestKey): QuestProgressR
   return rows.find((r) => r.quest_key === key);
 }
 
-export interface QuestResult {
-  ok: boolean;
-  message: string;
-  data?: Record<string, unknown>;
+function savedAddress(rows: QuestProgressRow[]): string {
+  const row = rows.find((r) => r.quest_key === 'create_wallet' && r.completed);
+  const value = row?.details?.address;
+  return typeof value === 'string' ? value : '';
+}
+
+function savedTxHash(rows: QuestProgressRow[]): string {
+  const row = rows.find((r) => r.quest_key === 'send_tokens' && r.completed);
+  const value = row?.details?.tx_hash;
+  return typeof value === 'string' ? value : '';
 }
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-function detailString(rows: QuestProgressRow[], key: QuestKey, field: string): string {
-  const row = findRow(rows, key);
-  const value = row && row.details ? row.details[field] : undefined;
-  return typeof value === 'string' ? value : '';
+let lastCheck = 0;
+function tooFast(): boolean {
+  const now = Date.now();
+  if (now - lastCheck < 3000) return true;
+  lastCheck = now;
+  return false;
 }
 
-function saveCompleted(userId: string, quest: QuestKey, details: Record<string, unknown>): boolean {
-  const rows = readRows(userId).filter((r) => r.quest_key !== quest);
-  rows.push({
-    quest_key: quest,
-    completed: true,
-    details,
-    completed_at: new Date().toISOString(),
-  });
-  return writeRows(userId, rows);
-}
-
-async function callProxy(
-  body: Record<string, unknown>,
-  token: string,
+async function callChecker(
+  payload: Record<string, string>,
 ): Promise<Record<string, unknown> | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000);
   try {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/sabi-proxy`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${ANON_KEY}`,
         apikey: ANON_KEY,
       },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+      body: JSON.stringify(payload),
     });
     if (!response.ok) return null;
     const text = await response.text();
-    let parsed: unknown = JSON.parse(text);
-    if (Array.isArray(parsed)) parsed = parsed[0];
-    if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
-    return null;
+    const parsed = JSON.parse(text);
+    const item = Array.isArray(parsed) ? parsed[0] : parsed;
+    return item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-function cleanNumber(value: string | undefined): string | null {
-  const v = (value ?? '').trim().replace(',', '.');
-  return /^\d*\.?\d+$/.test(v) ? v : null;
+const NETWORK_MESSAGE =
+  'Could not reach the test network checker. Check your internet and try again in a moment.';
+
+function checkerError(code: unknown): string {
+  if (code === 'bad_hash') {
+    return 'That is not a valid transaction hash. It starts with 0x and has 66 characters in total.';
+  }
+  if (code === 'tx_not_found') {
+    return 'We could not find that transaction on Sepolia. Check the hash, and make sure it is from the Sepolia network.';
+  }
+  if (code === 'tx_pending') {
+    return 'That transaction is still pending. Wait a minute and try again.';
+  }
+  if (code === 'bad_address') {
+    return 'The address saved in Quest 1 is not valid. Please redo Quest 1.';
+  }
+  return 'The test network did not answer. Please try again in a minute.';
 }
 
-const SAVE_FAILED: QuestResult = {
-  ok: false,
-  message:
-    'Your answer is correct, but this browser could not save your progress. Turn off private browsing and try again.',
-};
-
-const SERVER_FAILED: QuestResult = {
-  ok: false,
-  message: 'Could not reach the checking service. Check your internet and try again in a moment.',
-};
+function isNumber(text: string): boolean {
+  return text !== '' && Number.isFinite(Number(text.replace(',', '.')));
+}
 
 export async function submitQuest(
   quest: QuestKey,
   fields: Record<string, string>,
 ): Promise<QuestResult> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const session = sessionData.session;
-  const userId = session?.user?.id;
+  const { data } = await supabase.auth.getSession();
+  const userId = data.session?.user.id;
   if (!userId) {
     return { ok: false, message: 'Please log in again and try once more.' };
   }
-  const token = session?.access_token || ANON_KEY;
-
   const rows = readRows(userId);
-  const walletAddress = detailString(rows, 'create_wallet', 'address');
-  const savedTxHash = detailString(rows, 'send_tokens', 'tx_hash');
 
-  // Quest 1: format check only, saved in this browser
   if (quest === 'create_wallet') {
     const address = (fields.address ?? '').trim();
     if (!ADDRESS_REGEX.test(address)) {
@@ -184,145 +186,109 @@ export async function submitQuest(
         message: 'That is not a valid address. It must start with 0x and have 42 characters in total.',
       };
     }
-    if (!saveCompleted(userId, quest, { address })) return SAVE_FAILED;
-    return { ok: true, message: 'Well done. Your wallet address is saved. Quest 1 is complete.' };
+    markDone(userId, 'create_wallet', { address });
+    return { ok: true, message: 'Wallet address saved. Quest 2 is now open.' };
   }
 
-  // Quest 2: compare the typed balance with the Sepolia balance
+  const address = savedAddress(rows);
+  if (!address) {
+    return { ok: false, message: 'Finish Quest 1 first, so we know your wallet address.' };
+  }
+
   if (quest === 'receive_tokens') {
-    if (!walletAddress) {
-      return { ok: false, message: 'Finish Quest 1 first, so we know your wallet address.' };
+    const claimed = (fields.claimed_balance ?? '').trim();
+    if (!isNumber(claimed)) {
+      return { ok: false, message: 'Type your balance as a number, for example 0.05.' };
     }
-    const claimed = cleanNumber(fields.claimed_balance);
-    if (!claimed) {
-      return { ok: false, message: 'Type the balance as a number, for example 0.05.' };
+    if (tooFast()) {
+      return { ok: false, message: 'Please wait a few seconds before trying again.' };
     }
-    const result = await callProxy(
-      { action: 'check_balance', address: walletAddress, claimed_balance: claimed },
-      token,
-    );
-    if (!result) return SERVER_FAILED;
-    if (result.ok !== true) {
-      if (result.error === 'rpc_error') {
-        return {
-          ok: false,
-          message: 'The Sepolia test network did not answer. Wait a minute and try again.',
-        };
-      }
-      return { ok: false, message: 'We could not check that address. Please try again.' };
+    const res = await callChecker({ action: 'check_balance', address, claimed_balance: claimed });
+    if (!res) return { ok: false, message: NETWORK_MESSAGE };
+    if (res.ok !== true) return { ok: false, message: checkerError(res.error) };
+    if (res.funded !== true) {
+      return {
+        ok: false,
+        message: `No test tokens have reached ${shortAddress(address)} yet. Wait a minute after using the faucet and try again. Also check that this is the address in your wallet.`,
+      };
     }
-    if (result.funded !== true) {
+    if (res.matches !== true) {
       return {
         ok: false,
         message:
-          'Your wallet has no Sepolia tokens yet. Use a faucet, wait for the tokens to arrive, then try again.',
+          'That balance does not match. Open your wallet on the Sepolia network, copy the balance exactly as shown, and try again.',
       };
     }
-    if (result.matches !== true) {
-      return {
-        ok: false,
-        message:
-          'That does not match the balance on the Sepolia network. Open your wallet, switch to the Sepolia network, and type the balance you see.',
-      };
-    }
-    if (!saveCompleted(userId, quest, { claimed_balance: claimed, balance_eth: String(result.balance_eth) })) {
-      return SAVE_FAILED;
-    }
-    return { ok: true, message: 'Correct. Your wallet holds Sepolia test tokens. Quest 2 is complete.' };
+    markDone(userId, 'receive_tokens', { address, balance: res.balance_eth });
+    return { ok: true, message: 'Correct. Your wallet received test tokens.' };
   }
 
-  // Quest 3: verify the transaction on Sepolia
   if (quest === 'send_tokens') {
-    if (!walletAddress) {
-      return { ok: false, message: 'Finish Quest 1 first, so we know your wallet address.' };
-    }
-    const hash = (fields.tx_hash ?? '').trim();
+    const hash = (fields.tx_hash ?? '').trim().toLowerCase();
     if (!TX_HASH_REGEX.test(hash)) {
+      return { ok: false, message: checkerError('bad_hash') };
+    }
+    if (tooFast()) {
+      return { ok: false, message: 'Please wait a few seconds before trying again.' };
+    }
+    const res = await callChecker({ action: 'check_tx', tx_hash: hash, expected_from: address });
+    if (!res) return { ok: false, message: NETWORK_MESSAGE };
+    if (res.ok !== true) return { ok: false, message: checkerError(res.error) };
+    if (res.success !== true) {
+      return { ok: false, message: 'That transaction failed on the network. Please send a new one.' };
+    }
+    if (res.sender_matches === false) {
       return {
         ok: false,
-        message: 'A transaction hash starts with 0x and has 66 characters in total.',
+        message: 'This transaction was not sent from the wallet address you saved in Quest 1.',
       };
     }
-    const result = await callProxy(
-      { action: 'check_tx', tx_hash: hash, expected_from: walletAddress },
-      token,
-    );
-    if (!result) return SERVER_FAILED;
-    if (result.ok !== true) {
-      if (result.error === 'tx_pending') {
-        return { ok: false, message: 'That transaction is still pending. Wait a minute and try again.' };
-      }
-      if (result.error === 'tx_not_found') {
-        return {
-          ok: false,
-          message:
-            'We could not find that transaction on Sepolia. Check that you copied the full hash and that you sent it on the Sepolia network.',
-        };
-      }
-      return { ok: false, message: 'That transaction hash is not valid. Copy it again and retry.' };
-    }
-    if (result.success !== true) {
-      return { ok: false, message: 'That transaction did not succeed on the network.' };
-    }
-    if (result.sender_matches === false) {
+    if (res.has_amount !== true) {
       return {
         ok: false,
-        message: 'That transaction was not sent from the wallet address you saved in Quest 1.',
+        message: 'This transaction did not send any tokens. Send a small amount to your second account.',
       };
     }
-    if (result.to_is_different !== true) {
-      return { ok: false, message: 'Send the tokens to a different account, not to yourself.' };
+    if (res.to_is_different !== true) {
+      return { ok: false, message: 'You must send the tokens to a different account.' };
     }
-    if (result.has_amount !== true) {
-      return {
-        ok: false,
-        message: 'That transaction did not move any test tokens. Send a small amount and try again.',
-      };
-    }
-    if (
-      !saveCompleted(userId, quest, {
-        tx_hash: hash,
-        value_eth: String(result.value_eth),
-        fee_eth: String(result.fee_eth),
-      })
-    ) {
-      return SAVE_FAILED;
-    }
-    return { ok: true, message: 'Transaction verified. Quest 3 is complete.' };
+    markDone(userId, 'send_tokens', {
+      tx_hash: hash,
+      from: res.from,
+      to: res.to,
+      value_eth: res.value_eth,
+      fee_eth: res.fee_eth,
+    });
+    return {
+      ok: true,
+      message: `Verified. You sent ${String(res.value_eth)} test ETH to ${shortAddress(String(res.to))}.`,
+    };
   }
 
-  // Quest 4: compare the typed fee with the real fee of the Quest 3 transaction
-  if (quest === 'gas_fees') {
-    if (!savedTxHash) {
-      return { ok: false, message: 'Finish Quest 3 first, so we know which transaction to use.' };
-    }
-    const claimedFee = cleanNumber(fields.claimed_fee);
-    if (!claimedFee) {
-      return { ok: false, message: 'Type the fee as a number, for example 0.00002.' };
-    }
-    const result = await callProxy(
-      { action: 'check_tx', tx_hash: savedTxHash, claimed_fee: claimedFee },
-      token,
-    );
-    if (!result) return SERVER_FAILED;
-    if (result.ok !== true) {
-      return { ok: false, message: 'We could not read your transaction right now. Please try again.' };
-    }
-    if (result.fee_has_claim !== true) {
-      return { ok: false, message: 'Type the fee as a number, for example 0.00002.' };
-    }
-    if (result.fee_matches !== true) {
-      return {
-        ok: false,
-        message:
-          'That does not match the fee of your transaction. Look at the Transaction Fee on the block explorer and try again.',
-      };
-    }
-    if (!saveCompleted(userId, quest, { claimed_fee: claimedFee, fee_eth: String(result.fee_eth) })) {
-      return SAVE_FAILED;
-    }
-    return { ok: true, message: 'Correct. You found the gas fee. Quest 4 is complete.' };
+  const txHash = savedTxHash(rows);
+  if (!txHash) {
+    return { ok: false, message: 'Finish Quest 3 first, so we know which transaction to use.' };
   }
-
-  return { ok: false, message: 'This quest is not available yet.' };
+  const claimedFee = (fields.claimed_fee ?? '').trim();
+  if (!isNumber(claimedFee)) {
+    return { ok: false, message: 'Type the fee as a number, for example 0.000021.' };
+  }
+  if (tooFast()) {
+    return { ok: false, message: 'Please wait a few seconds before trying again.' };
+  }
+  const res = await callChecker({ action: 'check_tx', tx_hash: txHash, claimed_fee: claimedFee });
+  if (!res) return { ok: false, message: NETWORK_MESSAGE };
+  if (res.ok !== true) return { ok: false, message: checkerError(res.error) };
+  if (res.fee_matches !== true) {
+    return {
+      ok: false,
+      message:
+        'That is not the fee we found. Open your Quest 3 transaction on the Sepolia block explorer, find the Transaction Fee line, and type only that number.',
+    };
+  }
+  markDone(userId, 'gas_fees', { tx_hash: txHash, fee_eth: res.fee_eth });
+  return {
+    ok: true,
+    message: 'Correct. You found the real gas fee of your transaction. Your certificate is ready.',
+  };
 }
