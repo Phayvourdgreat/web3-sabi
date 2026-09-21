@@ -1,11 +1,25 @@
 import { useState, useRef, useEffect } from 'react';
 import { sabiRequest, getSessionId } from '@/lib/sabiApi';
+import type { HistoryItem } from '@/lib/sabiApi';
 import type { Lesson } from '@/types';
 import type { ChatMessage } from '@/types';
-import { Send, Sparkles, ArrowLeft, Bot, RotateCcw } from 'lucide-react';
+import {
+  Send,
+  Sparkles,
+  ArrowLeft,
+  Bot,
+  RotateCcw,
+  Image as ImageIcon,
+  Volume2,
+  Loader2,
+} from 'lucide-react';
 
 interface TutorMessage extends ChatMessage {
   debug?: string;
+  question?: string;
+  imageLoading?: boolean;
+  audioLoading?: boolean;
+  mediaError?: string | null;
 }
 
 interface AITutorProps {
@@ -46,7 +60,71 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
     setIsTyping(false);
   }
 
+  function updateMessage(id: string, patch: Partial<TutorMessage>) {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  }
+
+  async function handleMedia(msg: TutorMessage, kind: 'image' | 'audio') {
+    if (kind === 'image') {
+      updateMessage(msg.id, { imageLoading: true, mediaError: null });
+    } else {
+      updateMessage(msg.id, { audioLoading: true, mediaError: null });
+    }
+
+    try {
+      const res = await sabiRequest({
+        action: kind === 'image' ? 'generate_image' : 'generate_audio',
+        lesson_id: lesson?.id ?? '',
+        lesson_title: msg.question ?? lesson?.title ?? 'Web3',
+        lesson_content: msg.text.slice(0, 1500),
+        session_id: getSessionId(),
+      });
+
+      if (kind === 'image') {
+        if (res.image) {
+          updateMessage(msg.id, { image: res.image, imageLoading: false });
+        } else {
+          updateMessage(msg.id, {
+            imageLoading: false,
+            mediaError: 'Could not create the image. Please try again.',
+          });
+        }
+      } else {
+        if (res.audio) {
+          updateMessage(msg.id, { audio: res.audio, audioLoading: false });
+        } else {
+          updateMessage(msg.id, {
+            audioLoading: false,
+            mediaError: 'Could not create the audio. Please try again.',
+          });
+        }
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[AI Tutor] Media request failed:', errMsg);
+      if (kind === 'image') {
+        updateMessage(msg.id, {
+          imageLoading: false,
+          mediaError: 'Could not create the image. Please try again.',
+        });
+      } else {
+        updateMessage(msg.id, {
+          audioLoading: false,
+          mediaError: 'Could not create the audio. Please try again.',
+        });
+      }
+    }
+  }
+
   async function handleSend(text: string) {
+    const history: HistoryItem[] = messages
+      .filter((m) => m.id !== 'welcome' && !m.debug)
+      .slice(-6)
+      .map((m) => ({
+        role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+        content: m.text,
+      }));
+
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -66,6 +144,7 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
         lesson_content: lesson?.explanation ?? '',
         session_id: getSessionId(),
         question: text,
+        history,
       });
 
       setMessages((prev) => [
@@ -76,6 +155,7 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
           text: res.text ?? 'Sorry, I could not generate a response. Please try again.',
           audio: res.audio,
           image: res.image,
+          question: res.text ? text : undefined,
         },
       ]);
     } catch (err) {
@@ -155,6 +235,44 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
               {msg.debug && (
                 <p className="mt-2 text-[10px] text-gray-600 leading-relaxed break-all">{msg.debug}</p>
               )}
+
+              {msg.role === 'tutor' && msg.question && !msg.debug && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {!msg.image && (
+                    <button
+                      onClick={() => handleMedia(msg, 'image')}
+                      disabled={msg.imageLoading}
+                      className="flex items-center gap-1.5 bg-ink-900 border border-ink-700 rounded-xl px-3 py-2 text-xs font-semibold text-gray-300 hover:border-lime-500/50 hover:text-white transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {msg.imageLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-lime-500" />
+                      ) : (
+                        <ImageIcon className="w-3.5 h-3.5 text-lime-500" />
+                      )}
+                      {msg.imageLoading ? 'Creating image...' : 'Use Image'}
+                    </button>
+                  )}
+                  {!msg.audio && (
+                    <button
+                      onClick={() => handleMedia(msg, 'audio')}
+                      disabled={msg.audioLoading}
+                      className="flex items-center gap-1.5 bg-ink-900 border border-ink-700 rounded-xl px-3 py-2 text-xs font-semibold text-gray-300 hover:border-lime-500/50 hover:text-white transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {msg.audioLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-lime-500" />
+                      ) : (
+                        <Volume2 className="w-3.5 h-3.5 text-lime-500" />
+                      )}
+                      {msg.audioLoading ? 'Creating audio...' : 'Use Audio'}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {msg.mediaError && (
+                <p className="mt-2 text-xs text-red-400">{msg.mediaError}</p>
+              )}
+
               {msg.audio && (
                 <div className="mt-3">
                   <audio controls src={msg.audio} className="w-full h-9">
@@ -229,29 +347,4 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
       </div>
 
       {/* Input bar (visible after first message), sits above the bottom menu */}
-      {messages.length > 1 && (
-        <div className="fixed bottom-[68px] left-0 right-0 bg-ink-900/95 backdrop-blur-md border-t border-ink-700 px-5 py-3 z-30">
-          <div className="max-w-md mx-auto flex items-center gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && input.trim()) handleSend(input.trim());
-              }}
-              placeholder="Type your question here..."
-              className="flex-1 bg-ink-850 border border-ink-700 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-lime-500 focus:ring-1 focus:ring-lime-500 transition-colors"
-            />
-            <button
-              onClick={() => input.trim() && handleSend(input.trim())}
-              disabled={!input.trim() || isTyping}
-              className="w-12 h-12 rounded-xl bg-lime-500 text-ink-950 flex items-center justify-center hover:bg-lime-400 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-            >
-              <Send className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+      {messages.length > 1
