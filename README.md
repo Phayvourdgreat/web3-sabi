@@ -19,4 +19,5 @@ Bolt, Supabase, n8n and Orbio AI
 
 ## Live demo
 
-https://web3-learning-app-103y.bolt.host
+Vercel: https://web3-sabi.vercel.app/
+Bolt backup: https://web3-learning-app-103y.bolt.host
