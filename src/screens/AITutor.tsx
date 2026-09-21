@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { sabiRequest, getSessionId } from '@/lib/sabiApi';
 import type { Lesson } from '@/types';
 import type { ChatMessage } from '@/types';
-import { Send, Sparkles, ArrowLeft, Bot } from 'lucide-react';
+import { Send, Sparkles, ArrowLeft, Bot, RotateCcw } from 'lucide-react';
 
 interface TutorMessage extends ChatMessage {
   debug?: string;
@@ -16,23 +16,22 @@ interface AITutorProps {
 const SUGGESTED_QUESTIONS = [
   'What is Web3?',
   'What is a blockchain?',
-  'What is a crypto wallet?',
   'What is a crypto wallet in simple terms?',
   'How do gas fees work?',
   'Explain blockchain like I am 5',
   'What is DeFi and why does it matter?',
 ];
 
+const WELCOME_MESSAGE: TutorMessage = {
+  id: 'welcome',
+  role: 'tutor',
+  text: 'Hello! I am your AI Web3 Tutor. Ask me anything about Web3, blockchain, crypto, or any lesson you have been learning. No question is too simple!',
+  audio: null,
+  image: null,
+};
+
 export default function AITutor({ onBack, lesson }: AITutorProps) {
-  const [messages, setMessages] = useState<TutorMessage[]>([
-    {
-      id: 'welcome',
-      role: 'tutor',
-      text: 'Hello! I am your AI Web3 Tutor. Ask me anything about Web3, blockchain, crypto, or any lesson you have been learning. No question is too simple!',
-      audio: null,
-      image: null,
-    },
-  ]);
+  const [messages, setMessages] = useState<TutorMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -40,6 +39,12 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
+
+  function handleNewChat() {
+    setMessages([WELCOME_MESSAGE]);
+    setInput('');
+    setIsTyping(false);
+  }
 
   async function handleSend(text: string) {
     const userMsg: ChatMessage = {
@@ -112,11 +117,20 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
               </p>
             </div>
           </div>
+          {messages.length > 1 && (
+            <button
+              onClick={handleNewChat}
+              className="ml-auto flex items-center gap-1.5 bg-ink-850 border border-ink-700 rounded-xl px-3 py-2 text-xs font-semibold text-gray-300 hover:border-lime-500/50 hover:text-white transition-all"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              New
+            </button>
+          )}
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4 pb-32">
+      <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4 pb-44">
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -214,9 +228,9 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input bar (visible after first message) */}
+      {/* Input bar (visible after first message), sits above the bottom menu */}
       {messages.length > 1 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-ink-900/95 backdrop-blur-md border-t border-ink-700 px-5 py-3 z-40">
+        <div className="fixed bottom-[68px] left-0 right-0 bg-ink-900/95 backdrop-blur-md border-t border-ink-700 px-5 py-3 z-30">
           <div className="max-w-md mx-auto flex items-center gap-2">
             <input
               type="text"
