@@ -348,3 +348,29 @@ export default function AITutor({ onBack, lesson }: AITutorProps) {
 
       {/* Input bar (visible after first message), sits above the bottom menu */}
       {messages.length > 1
+        && (
+        <div className="fixed bottom-[68px] left-0 right-0 bg-ink-900/95 backdrop-blur-md border-t border-ink-700 px-5 py-3 z-30">
+          <div className="max-w-md mx-auto flex items-center gap-2">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && input.trim()) handleSend(input.trim());
+              }}
+              placeholder="Type your question here..."
+              className="flex-1 bg-ink-850 border border-ink-700 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-lime-500 focus:ring-1 focus:ring-lime-500 transition-colors"
+            />
+            <button
+              onClick={() => input.trim() && handleSend(input.trim())}
+              disabled={!input.trim() || isTyping}
+              className="w-12 h-12 rounded-xl bg-lime-500 text-ink-950 flex items-center justify-center hover:bg-lime-400 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
