@@ -8,6 +8,7 @@ import Dashboard from '@/screens/Dashboard';
 import LessonScreen from '@/screens/LessonScreen';
 import AITutor from '@/screens/AITutor';
 import ProgressPage from '@/screens/ProgressPage';
+import Quests from '@/screens/Quests';
 import BottomNav from '@/components/BottomNav';
 import type { Screen } from '@/types';
 
@@ -20,7 +21,10 @@ function AppContent() {
   if (!user) return <AuthScreen />;
 
   const showBottomNav =
-    screen.name === 'dashboard' || screen.name === 'progress' || screen.name === 'ai-tutor';
+    screen.name === 'dashboard' ||
+    screen.name === 'progress' ||
+    screen.name === 'ai-tutor' ||
+    screen.name === 'quests';
 
   function navigate(s: Screen) {
     setScreen(s);
@@ -66,6 +70,8 @@ function AppContent() {
     );
   } else if (screen.name === 'ai-tutor') {
     content = <AITutor onBack={() => navigate({ name: 'dashboard' })} lesson={activeLesson} />;
+  } else if (screen.name === 'quests') {
+    content = <Quests onBack={() => navigate({ name: 'dashboard' })} />;
   }
 
   return (
