@@ -1,4 +1,4 @@
-import { Home, BookOpen, TrendingUp, MessageCircle } from 'lucide-react';
+import { Home, BookOpen, TrendingUp, MessageCircle, Target } from 'lucide-react';
 import type { Screen } from '@/types';
 
 interface NavProps {
@@ -8,9 +8,10 @@ interface NavProps {
 
 const items = [
   { key: 'dashboard', label: 'Home', icon: Home },
-  { key: 'lesson', label: 'Learn', icon: BookOpen, screen: { name: 'dashboard' } as Screen },
-  { key: 'progress', label: 'Progress', icon: TrendingUp, screen: { name: 'progress' } as Screen },
-  { key: 'ai-tutor', label: 'AI Tutor', icon: MessageCircle, screen: { name: 'ai-tutor' } as Screen },
+  { key: 'lesson', label: 'Learn', icon: BookOpen },
+  { key: 'quests', label: 'Quests', icon: Target },
+  { key: 'progress', label: 'Progress', icon: TrendingUp },
+  { key: 'ai-tutor', label: 'AI Tutor', icon: MessageCircle },
 ];
 
 export default function BottomNav({ current, onNavigate }: NavProps) {
@@ -26,16 +27,18 @@ export default function BottomNav({ current, onNavigate }: NavProps) {
           const screen: Screen =
             item.key === 'lesson'
               ? { name: 'dashboard' }
-              : item.key === 'progress'
-                ? { name: 'progress' }
-                : item.key === 'ai-tutor'
-                  ? { name: 'ai-tutor' }
-                  : { name: 'dashboard' };
+              : item.key === 'quests'
+                ? { name: 'quests' }
+                : item.key === 'progress'
+                  ? { name: 'progress' }
+                  : item.key === 'ai-tutor'
+                    ? { name: 'ai-tutor' }
+                    : { name: 'dashboard' };
           return (
             <button
               key={item.key}
               onClick={() => onNavigate(screen)}
-              className={`flex flex-col items-center gap-1 px-4 py-1.5 rounded-xl transition-all ${
+              className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-all ${
                 isActive ? 'text-lime-500' : 'text-gray-500 hover:text-gray-300'
               }`}
             >
