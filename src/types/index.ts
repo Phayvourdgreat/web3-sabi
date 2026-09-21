@@ -36,7 +36,8 @@ export type Screen =
   | { name: 'dashboard' }
   | { name: 'lesson'; lessonId: string }
   | { name: 'progress' }
-  | { name: 'ai-tutor' };
+  | { name: 'ai-tutor' }
+  | { name: 'quests' };
 
 export interface ChatMessage {
   id: string;
