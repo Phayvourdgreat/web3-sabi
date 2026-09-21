@@ -1,5 +1,10 @@
 export type SabiAction = 'ask_tutor' | 'generate_image' | 'generate_audio';
 
+export interface HistoryItem {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface SabiRequest {
   action: SabiAction;
   lesson_id: string;
@@ -7,6 +12,7 @@ export interface SabiRequest {
   lesson_content: string;
   session_id: string;
   question?: string;
+  history?: HistoryItem[];
 }
 
 export interface SabiResponse {
@@ -113,6 +119,7 @@ export async function sabiRequest(req: SabiRequest): Promise<SabiResponse> {
     session_id: req.session_id,
   };
   if (req.question) body.question = req.question;
+  if (req.history && req.history.length > 0) body.history = req.history;
 
   let response: Response;
   try {
@@ -142,7 +149,7 @@ export async function sabiRequest(req: SabiRequest): Promise<SabiResponse> {
     throw new Error(`The AI service returned status ${response.status}. | URL: ${url} | Body: ${errBody.slice(0, 200)}`);
   }
 
-  // Binary audio/image response — create object URL
+  // Binary audio or image response, create object URL
   if (contentType.startsWith('audio/') || contentType.startsWith('image/')) {
     try {
       const blob = await response.blob();
@@ -183,7 +190,7 @@ export async function sabiRequest(req: SabiRequest): Promise<SabiResponse> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[Sabi API] JSON parse failed for', req.action, '- text:', responseText.slice(0, 300));
-      // If it's a plain text tutor reply, use it directly
+      // If it is a plain text tutor reply, use it directly
       if (req.action === 'ask_tutor') {
         return {
           text: responseText.trim(),
@@ -206,7 +213,7 @@ export async function sabiRequest(req: SabiRequest): Promise<SabiResponse> {
         debug: `URL: ${url} | Status: ${response.status} | Type: text/plain`,
       };
     }
-    // For image/audio actions with non-JSON, non-binary responses, treat as base64
+    // For image or audio actions with non JSON, non binary responses, treat as base64
     if (req.action === 'generate_image') {
       const img = normalizeImage(responseText.trim());
       if (img) return { text: null, image: img, audio: null, raw: responseText.slice(0, 100), debug: `URL: ${url} | Status: ${response.status} | Type: text` };
@@ -283,7 +290,7 @@ export async function sabiRequest(req: SabiRequest): Promise<SabiResponse> {
       ['result', 'audio_url'],
     ]);
 
-  // For generate_image, check generic url/link/src as fallback
+  // For generate_image, check generic url, link or src as fallback
   if (!imageRaw && req.action === 'generate_image') {
     const genericUrl =
       findString(data, ['url', 'link', 'src']) ??
@@ -293,7 +300,7 @@ export async function sabiRequest(req: SabiRequest): Promise<SabiResponse> {
     }
   }
 
-  // For generate_audio, check generic url/link/src as fallback
+  // For generate_audio, check generic url, link or src as fallback
   if (!audioRaw && req.action === 'generate_audio') {
     const genericUrl =
       findString(data, ['url', 'link', 'src']) ??
