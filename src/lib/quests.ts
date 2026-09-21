@@ -292,3 +292,11 @@ export async function submitQuest(
     message: 'Correct. You found the real gas fee of your transaction. Your certificate is ready.',
   };
 }
+
+export async function resetQuestProgress(userId: string): Promise<void> {
+  try {
+    localStorage.removeItem(STORAGE_PREFIX + userId);
+  } catch {
+    // Browser storage can be blocked. Nothing to clear then.
+  }
+}
